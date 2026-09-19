@@ -1,0 +1,9 @@
+fastapi
+sqlalchemy
+uvicorn
+pydantic
+alembic
+psycopg[binary]
+dotenv
+asyncpg
+httpx

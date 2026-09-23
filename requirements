@@ -8,3 +8,5 @@ pydantic[email]
 dotenv
 asyncpg
 httpx
+PyJWT
+passlib

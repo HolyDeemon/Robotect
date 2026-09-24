@@ -1,7 +1,7 @@
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.future import select
 from DATABASE.database import async_session_maker
-from DATABASE.models import User
+from DATABASE.models import User, Coef
 
 class BaseDAO:
     model = None
@@ -42,3 +42,6 @@ class BaseDAO:
 
 class UsersDAO(BaseDAO):
     model = User
+
+class CoefDAO(BaseDAO):
+    model = Coef

@@ -10,3 +10,6 @@ asyncpg
 httpx
 PyJWT
 passlib
+numpy
+pandas
+matplotlib

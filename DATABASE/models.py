@@ -13,7 +13,7 @@ class Coef(Base):
     __tablename__ = 'coefficients'
 
     name: Mapped[str] = mapped_column(String(50), nullable=False)
-    min: Mapped[float] = mapped_column()
+    pess: Mapped[float] = mapped_column()
     base: Mapped[float] = mapped_column(nullable=False)
-    max: Mapped[float] = mapped_column()
+    opt: Mapped[float] = mapped_column()
     from_dataset: Mapped[bool] = mapped_column(nullable=False)

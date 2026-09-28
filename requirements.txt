@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+asyncpg
+greenlet
+python-dotenv
+pydantic
+email-validator
+httpx
+PyJWT
+passlib
+numpy
+pandas

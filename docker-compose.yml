@@ -1,0 +1,70 @@
+
+# Сайт: http://localhost:8080
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: robotect
+      POSTGRES_PASSWORD: robotect
+      POSTGRES_DB: robotect
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U robotect -d robotect"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  db:
+    build: .
+    command: sh -c "python docker/seed.py && exec uvicorn DATABASE.main_db:app --host 0.0.0.0 --port 8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://robotect:robotect@postgres:5432/robotect
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/case?case_id=1')"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+
+  login:
+    build: .
+    command: uvicorn LOGIN.main_login:app --host 0.0.0.0 --port 6000
+    environment:
+      URL: http://db
+      DB_PORT: "8000"
+      SECRET_KEY: robotect-demo
+    depends_on:
+      db:
+        condition: service_healthy
+
+  math:
+    build: .
+    command: uvicorn MATH.main_math:app --host 0.0.0.0 --port 7000
+    environment:
+      URL: http://db
+      DB_PORT: "8000"
+      PYTHONPATH: /app:/app/MATH
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      db:
+        condition: service_healthy
+      login:
+        condition: service_started
+      math:
+        condition: service_started
+
+volumes:
+  pgdata:

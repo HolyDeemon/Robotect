@@ -70,9 +70,9 @@ class Case(Base):
     description: Mapped[Optional[str]] = mapped_column(Text)
 
     robot_count: Mapped[int] = mapped_column()
-    tariff : Mapped[int] = mapped_column()
+    tariff: Mapped[int] = mapped_column()
     shortened: Mapped[int] = mapped_column()
-    
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

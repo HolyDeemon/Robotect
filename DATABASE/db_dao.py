@@ -1,3 +1,5 @@
+from typing import Optional
+
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.future import select
 from DATABASE.database import async_session_maker
@@ -88,3 +90,42 @@ class DatasetDAO(BaseDAO):
 
 class CaseDAO(BaseDAO):
     model = Case
+    @classmethod
+    async def update_case(cls, id: int,
+                          name: Optional[str] = None,
+                          description: Optional[str] = None,
+                          robot_count: Optional[str] = None,
+                          shortened: Optional[str] = None,
+                          tariff: Optional[str] = None,
+                          ) -> Dataset:
+        """Создаёт или перезаписывает датасет кейса и обновляет object_type в Case."""
+        async with async_session_maker() as session:
+            async with session.begin():
+                case = await session.get(Case, id)
+                if case is None:
+                    raise ValueError(f"Кейс {id} не найден")
+
+                # собираем только непустые значения
+                updates = {
+                    "name": name,
+                    "description": description,
+                    "robot_count": robot_count,
+                    "shortened": shortened,
+                    "tariff": tariff
+                }
+
+                changed = False
+                for field, value in updates.items():
+                    if value is None:
+                        continue
+                    if field not in cls.ALLOWED_FIELDS:
+                        continue
+                    if getattr(case, field) != value:
+                        setattr(case, field, value)
+                        changed = True
+
+                if not changed:
+                    pass
+
+            await session.refresh(case)
+            return case

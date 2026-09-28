@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, HTTPException, Depends, Cookie
+from fastapi import FastAPI, Request, HTTPException, Depends, Cookie, Body
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from schemas import *
@@ -98,16 +98,16 @@ async def get_dataset(data: SDatasetCreate):
 
 
 @app.get("/case")
-async def get_case(case_id : int):
+async def get_case(case_id: int):
     dataset = await CaseDAO.find_one_or_none_by_id(case_id)
     if dataset is None:
         raise HTTPException(status_code=404, detail="Коэффицент не найден")
     return dataset
 
-@app.post("/case")
-async def get_case(data: SCaseCreate):
+@app.put("/case")
+async def get_case(id: int, case: SCaseUpdate):
     try:
-        return await CaseDAO.add(**data.dict())
+        return await CaseDAO.update_case(id=id, **case.model_dump(exclude_unset=True))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка сервера: {e}")
 

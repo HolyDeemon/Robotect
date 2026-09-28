@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, HTTPException, Depends, Cookie
+from fastapi import FastAPI, Request, HTTPException, Depends, Cookie, Body
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from schemas import *
@@ -59,8 +59,56 @@ async def get_coef(name: int):
     return coef
 
 @app.post("/coef")
-async def get_coef(coef_data: SCoefCreate):
+async def add_coef(coef_data: SCoefCreate):
     try:
         return await CoefDAO.add(**coef_data.dict())
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка сервера: {e}")
+
+
+
+@app.get("/robot")
+async def get_robot(robot_id : int):
+    robot = await CoefDAO.find_one_or_none_by_id(robot_id)
+    if robot is None:
+        raise HTTPException(status_code=404, detail="Коэффицент не найден")
+    return robot
+
+@app.post("/robot")
+async def get_dataset(data: SRobot):
+    try:
+        return await RobotDAO.add(**data.dict())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка сервера: {e}")
+
+
+@app.get("/dataset")
+async def get_dataset(case_id: int):
+    dataset = await DatasetDAO.get_by_case(case_id=case_id)
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="Коэффицент не найден")
+    return dataset
+
+@app.post("/dataset")
+async def get_dataset(data: SDatasetCreate):
+    try:
+        return await DatasetDAO.add(**data.dict())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка сервера: {e}")
+
+
+@app.get("/case")
+async def get_case(case_id: int):
+    dataset = await CaseDAO.find_one_or_none_by_id(case_id)
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="Коэффицент не найден")
+    return dataset
+
+@app.put("/case")
+async def get_case(id: int, case: SCaseUpdate):
+    try:
+        return await CaseDAO.update_case(id=id, **case.model_dump(exclude_unset=True))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка сервера: {e}")
+
+

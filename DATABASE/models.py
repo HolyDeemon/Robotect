@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional, List
 
-from sqlalchemy import String, Index, BigInteger, ForeignKey, DateTime, func, Text, UniqueConstraint
+from sqlalchemy import String, Index, BigInteger, Integer, ForeignKey, DateTime, func, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from DATABASE.database import Base
@@ -62,7 +62,7 @@ class Case(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True,
                                     autoincrement=True)
     user_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("users.id", ondelete="CASCADE"),
+        Integer, ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False)
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)

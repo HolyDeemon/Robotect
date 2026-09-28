@@ -1,7 +1,9 @@
 <script setup>
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { calculateObject } from '../api/server'
 import AppHeader from '../components/AppHeader.vue'
+import EconomyFigures from '../components/EconomyFigures.vue'
 import SiteFooter from '../components/SiteFooter.vue'
 import { products } from '../data/catalog'
 import {
@@ -22,6 +24,10 @@ const errors = ref([])
 const fileMessage = ref('')
 const fileOk = ref(false)
 const result = ref(null)
+const economy = ref(null)
+const economyState = ref('')
+const economyError = ref('')
+const economyProgress = ref({ done: 0, total: 14, label: '' })
 const compared = ref([])
 const forced = ref([])
 const resultsEl = ref(null)
@@ -55,6 +61,10 @@ function choose(id) {
   errors.value = []
   fileMessage.value = ''
   result.value = null
+  economy.value = null
+  economyState.value = ''
+  economyError.value = ''
+  economyProgress.value = { done: 0, total: 14, label: '' }
   compared.value = []
   forced.value = []
 }
@@ -122,8 +132,25 @@ async function run() {
   const focusMatched = result.value.matched.some((item) => item.product.id === focusId)
   compared.value = focusMatched ? [focusId] : []
   forced.value = []
+  economy.value = null
+  economyError.value = ''
+  economyProgress.value = { done: 0, total: 14, label: 'Записываем параметры объекта' }
+  economyState.value = 'loading'
   await nextTick()
   resultsEl.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  try {
+    const saved = await calculateObject(current.value, params.value, (progress) => {
+      economyProgress.value = progress
+      economy.value = progress.economy
+    })
+    economy.value = saved.economy
+    economyError.value = saved.error
+  } catch (error) {
+    const text = error?.message || 'Не удалось записать параметры.'
+    economyError.value = text.length < 180 ? text : 'Параметры не записались, экономика не посчитана.'
+  } finally {
+    economyState.value = ''
+  }
 }
 
 function toggleCompare(id) {
@@ -235,6 +262,13 @@ function optionLabel(field, value) {
       <button type="button" class="submit" @click="run">Подобрать решения</button>
 
       <div v-if="result" ref="resultsEl" class="results">
+        <EconomyFigures
+          v-if="economyState === 'loading' || economy"
+          :economy="economy"
+          :loading="economyState === 'loading'"
+          :progress="economyProgress"
+          :error="economyError"
+        />
         <h2>Подборка</h2>
         <p class="lead">
           Оценка от 0 до 100 складывается из шести критериев: запас грузоподъёмности, автономность,

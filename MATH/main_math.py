@@ -55,30 +55,41 @@ def get_db_URL(route : str = "") -> str :
     return f"{URL}:{DB_PORT}/" + route
 
 
+DB_TIMEOUT = httpx.Timeout(30.0)
+
 async def get_coff(name: str) -> dict:
     if name in _coef_cache:
         return _coef_cache[name]
     async with _cache_lock:
         if name in _coef_cache:
             return _coef_cache[name]
-        async with httpx.AsyncClient() as session:
-            user = await session.get(get_db_URL("coef"), params={"name": name})
+        async with httpx.AsyncClient(timeout=DB_TIMEOUT) as session:
+            lookup = name if name.lower() != "k_load" else "k_load"
+            user = await session.get(get_db_URL("coef"), params={"name": lookup})
+            if user.status_code == 404 and lookup != name:
+                user = await session.get(get_db_URL("coef"), params={"name": name})
             try:
                 data = user.json()
-                _coef_cache[name] = data
-                return data
-
             except Exception as e:
                 raise HTTPException(status_code=500, detail=f"Ошибка сервера: {e}")
+            if user.status_code != 200:
+                raise HTTPException(status_code=user.status_code, detail=data.get("detail", "Коэффициент не найден"))
+            data["opt"] = data.get("max", data.get("base", 1))
+            data["pess"] = data.get("min", data.get("base", 1))
+            _coef_cache[name] = data
+            return data
 
 async def get_id(id : int, category: str):
-    async with httpx.AsyncClient() as session:
-        data = await session.get(get_db_URL(category), params={"id": id})
+    param = {"dataset": "case_id", "robot": "robot_id", "case": "case_id"}.get(category, "id")
+    async with httpx.AsyncClient(timeout=DB_TIMEOUT) as session:
+        response = await session.get(get_db_URL(category), params={param: id})
         try:
-            return data.json()
-
+            data = response.json()
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Ошибка сервера: {e}")
+        if response.status_code != 200:
+            raise HTTPException(status_code=response.status_code, detail=data.get("detail", "Не найдено"))
+        return data
 
 async def get_dataset(dataset_id : int) -> SDatasetRead:
     return SDatasetRead.model_validate(await get_id(dataset_id, "dataset"))
@@ -88,216 +99,202 @@ async def get_robot(robot_id : int) -> SRobot:
 async def get_case(case_id: int) -> SCaseRead:
     return SCaseRead.model_validate(await get_id(case_id, "case"))
 
-@app.post("math/cache")
+def field_num(data: dict, *names, default=0.0) -> float:
+    for name in names:
+        item = data.get(name)
+        if item is None:
+            continue
+        raw = item.get("base", item.get("scenario")) if isinstance(item, dict) else item
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            continue
+    return float(default)
+
+
+def operations_per_day(data: dict) -> float:
+    direct = field_num(data, "OperationsInDay", "Объём отбора (штук/сутки, всего)", "Количество операций")
+    if direct:
+        return direct
+    return (
+        field_num(data, "Входящие операции")
+        + field_num(data, "Внутрискладские операции")
+        + field_num(data, "Исходящие операции")
+        + field_num(data, "Перевозок в сутки")
+    )
+
+
+def work_hours(data: dict) -> float:
+    explicit = field_num(data, "WorkTimeInDay")
+    if explicit:
+        return explicit
+    days = field_num(data, "Рабочих дней в году")
+    shifts = field_num(data, "Количество рабочих смен в сутки")
+    shift = field_num(data, "Продолжительность смены")
+    if days and shifts and shift:
+        return days * shifts * shift
+    hours = field_num(data, "Режим работы", default=8)
+    weeks = field_num(data, "Рабочих дней", default=5)
+    return hours * weeks * 52
+
+
+async def coef_value(name: str, scenario: str) -> float:
+    coef = await get_coff(name)
+    if scenario in coef:
+        return float(coef[scenario])
+    return float(coef.get("base", 1))
+
+
+@app.post("/math/cache")
 async def clear_cache():
     _coef_cache.clear()
+    return {"ok": True}
 
 
-@app.get("math/robots")
+@app.get("/math/robots")
 async def get_robot_count(case_id:int, robot_id: int, scenario : str):
     try:
         dataset = await get_dataset(case_id)
         robot = await get_robot(robot_id)
+        data = dataset.data
+        ops = operations_per_day(data) or 1
+        hours = work_hours(data) or 1
         return robot_count(
-            k_res=(await get_coff("k_res"))[scenario],
-            k_PeLo = dataset.data["Пиковый коэффициент нагрузки"],
-            k_load = (await get_coff("K_load"))[scenario],
-
-            dataset = dataset,
-            efficiency= robot.efficiency,
-            work_time = robot.work_time,
-            charge_time = robot.charge_time
+            k_res=await coef_value("k_res", scenario),
+            k_PeLo=field_num(data, "Пиковый коэффициент нагрузки", default=1) or 1,
+            k_load=await coef_value("k_load", scenario),
+            dataset={"OperationsInDay": ops, "WorkTimeInDay": hours},
+            efficiency=robot.efficiency,
+            work_time=robot.work_time,
+            charge_time=robot.charge_time,
         )
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка: {e}")
 
 
-@app.get("math/CAPEX")
+def salary_rub(data: dict) -> float:
+    named = field_num(data, "Стоимость персонала")
+    if named:
+        return named
+    picker = field_num(data, "Средняя з/п отборщика (gross)")
+    driver = field_num(data, "Средняя з/п оператора погрузчика (gross)")
+    if picker or driver:
+        return (picker + driver) / 2
+    return 0.0
+
+
+def fot_coef(data: dict, fallback: float) -> float:
+    value = field_num(data, "Коэффициент начислений на ФОТ (страховые взносы)")
+    return value or fallback
+
+
+@app.get("/math/CAPEX")
 async def get_CAPEX(case_id: int, robot_id : int, scenario : str):
     try:
         robot = await get_robot(robot_id)
-        k_solCost = 1.0
-        if(scenario == "opt"):
-            k_solCost = 1.2
-        elif(scenario == "pess"):
-            k_solCost = 0.8
-
+        robots = await get_robot_count(case_id, robot_id, scenario)
+        k_solCost = 1.2 if scenario == "opt" else 0.8 if scenario == "pess" else 1.0
         return CAPEX(
-            k_solCost = k_solCost,
-            k_res=(await get_coff("k_res"))[scenario],
-            k_PO = (await  get_coff("k_PO"))[scenario],
-            k_integ = (await  get_coff("k_integ"))[scenario],
-            k_PNR = (await  get_coff("k_PNR"))[scenario],
-            k_learn = (await  get_coff("k_learn"))[scenario],
-            robot_count = (await get_robot_count(robot_id, scenario))["robot_count"],
-            cost = robot.cost
+            k_solCost=k_solCost,
+            k_res=await coef_value("k_res", scenario),
+            k_PO=await coef_value("k_PO", scenario),
+            k_integ=await coef_value("k_integ", scenario),
+            k_PNR=await coef_value("k_PNR", scenario),
+            k_learn=await coef_value("k_learn", scenario),
+            robot_count=robots["robot_count"],
+            cost=robot.cost,
         )
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка: {e}")
 
-@app.get("math/OPEX")
+@app.get("/math/OPEX")
 async def get_OPEX(case_id : int, robot_id : int, scenario : str):
+    try:
+        case = await get_case(case_id)
+        dataset = await get_dataset(case_id)
+        capex = await get_CAPEX(case_id, robot_id, scenario)
+        data = dataset.data
+        return OPEX(
+            k_service=await coef_value("k_service", scenario),
+            k_lic=await coef_value("k_lic", scenario),
+            k_conn=await coef_value("k_conn", scenario),
+            k_cons=await coef_value("k_cons", scenario),
+            k_rep=await coef_value("k_rep", scenario),
+            k_FOT=fot_coef(data, await coef_value("k_FOT", scenario)),
+            salary=0,
+            count=case.robot_count,
+            capex=capex["CAPEX"],
+            equip=capex["equip"],
+            power_kW=field_num(data, "Мощность электроснабжения (доступная)", default=1) or 1,
+            work_hours=work_hours(data) or 1,
+            tariff=case.tariff,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка: {e}")
 
-    case = await get_case(case_id)
-    dataset = await get_dataset(case_id)
-    capex = (await get_CAPEX(robot_id, scenario))
-
-    return OPEX(
-        k_service = (await get_coff("k_service"))[scenario],
-        k_lic = (await get_coff("k_lic"))[scenario],
-        k_conn =(await get_coff("k_conn"))[scenario],
-        k_cons = (await get_coff("k_cons"))[scenario],
-        k_rep = (await get_coff("k_rep"))[scenario],
-        k_FOT = dataset.data["Коэффициент начислений на ФОТ (страховые взносы)"]["scenario"],
-        salary = 0,
-        count= case.robot_count,
-        capex = capex["CAPEX"],
-        equip = capex["equip"],
-        power_kW = dataset.data["Мощность электроснабжения (доступная)"]["scenario"],
-        work_hours = dataset.data["Рабочих дней в году"]["scenario"] *
-                     dataset.data["Количество рабочих смен в сутки"]["scenario"] *
-                     dataset.data["Продолжительность смены"]["scenario"],
-        tariff = case.tariff
-    )
-
-@app.get("math/YearEffect")
+@app.get("/math/YearEffect")
 async def get_year_econ_effect(case_id : int, robot_id : int, add_inc:int,
                 prev_los:int, scenario : str):
-    case = await  get_case(case_id)
-    dataset = await get_dataset(case_id)
-    capex = (await get_CAPEX(robot_id, scenario))
-    opex = (await get_OPEX(case_id=case_id,robot_id =robot_id,
-        k_service = (await get_coff("k_service"))[scenario],
-        k_lic = (await get_coff("k_lic"))[scenario],
-        k_conn =(await get_coff("k_conn"))[scenario],
-        k_cons = (await get_coff("k_cons"))[scenario],
-        k_rep = (await get_coff("k_rep"))[scenario],
-        k_FOT = dataset.data["Коэффициент начислений на ФОТ (страховые взносы)"][scenario],
-        salary = 0,
-        count= case.count,
-        capex = capex["CAPEX"],
-        equip = capex["equip"],
-        power_kW = dataset.data["Мощность электроснабжения (доступная)"][scenario],
-        work_hours = dataset.data["Рабочих дней в году"]["scenario"] *
-                     dataset.data["Количество рабочих смен в сутки"][scenario] *
-                     dataset.data["Продолжительность смены"][scenario],
-        tariff = case.tariff
-    ))
+    try:
+        case = await get_case(case_id)
+        dataset = await get_dataset(case_id)
+        opex = await get_OPEX(case_id, robot_id, scenario)
+        data = dataset.data
+        return year_econ_effect(
+            opex=opex["OPEX"],
+            k_FOT=fot_coef(data, await coef_value("k_FOT", scenario)),
+            salary=salary_rub(data),
+            shortened_count=case.shortened,
+            add_inc=add_inc,
+            prev_los=prev_los,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка: {e}")
 
-    return year_econ_effect(
-        opex= opex["OPEX"],
-        k_FOT= dataset.data["Коэффициент начислений на ФОТ (страховые взносы)"][scenario],
-        salary= (dataset.data["Средняя з/п отборщика (gross)"][scenario] + dataset.data["Средняя з/п оператора погрузчика (gross)"][scenario])/2,
-        shortened_count= case.shortened,
-        add_inc= add_inc,
-        prev_los= prev_los,
-    )
-
-@app.get("math/PBPeriod")
+@app.get("/math/PBPeriod")
 async def get_payback_period(case_id : int, robot_id : int, add_inc:int,
                 prev_los:int, scenario : str):
-    case = await get_case(case_id)
-    dataset = await get_dataset(case_id)
-    capex = (await get_CAPEX(robot_id, scenario))
-    opex = (await get_OPEX(
-        k_service=(await get_coff("k_service"))[scenario],
-        k_lic=(await get_coff("k_lic"))[scenario],
-        k_conn=(await get_coff("k_conn"))[scenario],
-        k_cons=(await get_coff("k_cons"))[scenario],
-        k_rep=(await get_coff("k_rep"))[scenario],
-        k_FOT=dataset.data["Коэффициент начислений на ФОТ (страховые взносы)"]["scenario"],
-        salary=0,
-        count=case.count,
-        capex=capex["CAPEX"],
-        equip=capex["equip"],
-        power_kW=dataset.data["Мощность электроснабжения (доступная)"]["scenario"],
-        work_hours=dataset.data["Рабочих дней в году"]["scenario"] *
-                   dataset.data["Количество рабочих смен в сутки"]["scenario"] *
-                   dataset.data["Продолжительность смены"]["scenario"],
-        tariff=case.tariff
-    ))
-
-    year_econ_effect = (await get_year_econ_effect(
-        opex=opex["OPEX"],
-        k_FOT=dataset.data["Коэффициент начислений на ФОТ (страховые взносы)"]["scenario"],
-        salary=(dataset.data["Средняя з/п отборщика (gross)"]["scenario"] + dataset.data[
-            "Средняя з/п оператора погрузчика (gross)"]["scenario"]) / 2,
-        shortened_count=case.shortened,
-        add_inc=add_inc,
-        prev_los=prev_los,
-    ))
-
-    return payback_period(capex["CAPEX"], year_econ_effect["year_effect"])
+    try:
+        capex = await get_CAPEX(case_id, robot_id, scenario)
+        effect = await get_year_econ_effect(case_id, robot_id, add_inc, prev_los, scenario)
+        if not effect["year_effect"]:
+            return {"ok": False, "payback_period": None, "detail": "Годовой эффект равен нулю, срок окупаемости не считается"}
+        return payback_period(capex["CAPEX"], effect["year_effect"])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка: {e}")
 
 
-@app.get("math/ROI")
+@app.get("/math/ROI")
 async def get_ROI(case_id: int, robot_id: int, add_inc: int,
                  prev_los: int, scenario: str):
-    case = await get_case(case_id)
-    capex = (await get_CAPEX(robot_id, scenario))
-    dataset = await get_dataset(case_id)
-    opex = (await get_OPEX(
-        k_service=(await get_coff("k_service"))[scenario],
-        k_lic=(await get_coff("k_lic"))[scenario],
-        k_conn=(await get_coff("k_conn"))[scenario],
-        k_cons=(await get_coff("k_cons"))[scenario],
-        k_rep=(await get_coff("k_rep"))[scenario],
-        k_FOT=dataset.data["Коэффициент начислений на ФОТ (страховые взносы)"]["scenario"],
-        salary=0,
-        count=case.count,
-        capex=capex["CAPEX"],
-        equip=capex["equip"],
-        power_kW=dataset.data["Мощность электроснабжения (доступная)"]["scenario"],
-        work_hours=dataset.data["Рабочих дней в году"]["scenario"] *
-                   dataset.data["Количество рабочих смен в сутки"]["scenario"] *
-                   dataset.data["Продолжительность смены"]["scenario"],
-        tariff=case.tariff
-    ))
+    try:
+        capex = await get_CAPEX(case_id, robot_id, scenario)
+        effect = await get_year_econ_effect(case_id, robot_id, add_inc, prev_los, scenario)
+        dataset = await get_dataset(case_id)
+        horizon = field_num(dataset.data, "Горизонт расчёта окупаемости") or await coef_value("horizon", scenario)
+        return ROI(capex["CAPEX"], effect["year_effect"], horizon or 1)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка: {e}")
 
-    year_econ_effect = (await get_year_econ_effect(
-        opex=opex["OPEX"],
-        k_FOT=dataset.data["Коэффициент начислений на ФОТ (страховые взносы)"]["scenario"],
-        salary=(dataset.data["Средняя з/п отборщика (gross)"]["scenario"] + dataset.data[
-            "Средняя з/п оператора погрузчика (gross)"]["scenario"]) / 2,
-        shortened_count=case.shortened,
-        add_inc=add_inc,
-        prev_los=prev_los,
-    ))
-
-    return ROI(capex["CAPEX"], year_econ_effect["year_effect"], (await get_coff("horizon"))["scenario"])
-
-@app.get("math/TCO")
+@app.get("/math/TCO")
 async def get_TCO(case_id: int, robot_id: int, scenario: str):
-    case = await  get_case(case_id)
-    capex = (await get_CAPEX(robot_id, scenario))
-    dataset = await get_dataset(case_id)
-    robot = await get_robot(robot_id)
-    opex = (await get_OPEX(
-        k_service=(await get_coff("k_service"))[scenario],
-        k_lic=(await get_coff("k_lic"))[scenario],
-        k_conn=(await get_coff("k_conn"))[scenario],
-        k_cons=(await get_coff("k_cons"))[scenario],
-        k_rep=(await get_coff("k_rep"))[scenario],
-        k_FOT=dataset.data["Коэффициент начислений на ФОТ (страховые взносы)"]["scenario"],
-        salary=0,
-        count=case.count,
-        capex=capex["CAPEX"],
-        equip=capex["equip"],
-        power_kW=dataset.data["Мощность электроснабжения (доступная)"]["scenario"],
-        work_hours=dataset.data["Рабочих дней в году"]["scenario"] *
-                   dataset.data["Количество рабочих смен в сутки"]["scenario"] *
-                   dataset.data["Продолжительность смены"]["scenario"],
-        tariff=case.tariff
-    ))
-    return TCO(
-        capex=capex["CAPEX"],
-        opex=opex["OPEX"],
-        horizon=dataset.data["Горизонт расчёта окупаемости"]["scenario"],
-        equip=capex["equip"],
-        accum_life=robot.accum_life,
-        inflation=(await get_coff("inflation"))["scenario"])
+    try:
+        capex = await get_CAPEX(case_id, robot_id, scenario)
+        opex = await get_OPEX(case_id, robot_id, scenario)
+        dataset = await get_dataset(case_id)
+        robot = await get_robot(robot_id)
+        horizon = int(field_num(dataset.data, "Горизонт расчёта окупаемости") or await coef_value("horizon", scenario) or 5)
+        life = robot.accum_life or 1
+        return TCO(
+            capex=capex["CAPEX"],
+            opex=opex["OPEX"],
+            horizon=horizon,
+            equip=capex["equip"],
+            accum_life=life,
+            inflation=await coef_value("inflation", scenario),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка: {e}")
 
 
 def build_report(sim: Simulation, tmap: TileMap, meta: dict) -> dict:
@@ -401,6 +398,7 @@ async def ws_endpoint(ws: WebSocket, user_id: str,  case_id:int, robot_id: int):
             "nrows": tmap.nrows,
             "tile_size_m": tmap.tile_size_m,
             "grid": tmap.grid.tolist(),
+            "robots": sim.robots_payload(),
         })
         await ws.send_json({
             "type": "robot_spec",
@@ -413,6 +411,8 @@ async def ws_endpoint(ws: WebSocket, user_id: str,  case_id:int, robot_id: int):
         })
 
         session = SESSIONS.setdefault(user_id, Session())
+        session.owner = id(ws)
+        session.simflag = True
 
         session.sim = sim
         session.tmap = tmap
@@ -431,9 +431,19 @@ async def ws_endpoint(ws: WebSocket, user_id: str,  case_id:int, robot_id: int):
             run_simulation(ws, session)
         )
 
+    except WebSocketDisconnect:
+        return
     except Exception as e:
-        await ws.close(code=1008, reason="У кейса нет датасета или нераспознаны данные")
-        raise HTTPException(status_code=500, detail=f"Ошибка инициализации: {e}")
+        print(f"[WS] init error: {e}")
+        try:
+            await ws.send_json({"type": "error", "message": "Симуляция не запустилась: сервис базы не успел ответить."})
+        except Exception:
+            pass
+        try:
+            await ws.close(code=1008, reason="У кейса нет датасета или нераспознаны данные")
+        except Exception:
+            pass
+        return
     except json.JSONDecodeError:
         await ws.send_json({"type": "error", "message": "invalid json"})
         raise HTTPException(status_code=500, detail="Ошибка декодирования сообщения")
@@ -446,16 +456,10 @@ async def ws_endpoint(ws: WebSocket, user_id: str,  case_id:int, robot_id: int):
 
             # ================= START =================
             if action == "start":
-
-                print(f"[WS] {user_id} robot: {robot_spec.model}, "
-                      f"speed={robot_spec.max_speed} м/с, "
-                      f"payload={robot_spec.capacity} кг")
-
-
-
+                await ws.send_json({"type": "started"})
 
             # ================= STOP =================
-            if action == "stop":
+            elif action == "stop":
                 if session.task and not session.task.done():
                     session.task.cancel()
                 await ws.send_json({"type": "stopped"})
@@ -511,9 +515,12 @@ async def ws_endpoint(ws: WebSocket, user_id: str,  case_id:int, robot_id: int):
                                     "message": f"unknown action: {action}"})
 
     except WebSocketDisconnect:
-        SESSIONS[user_id].simflag = False
-        SESSIONS[user_id].task.cancel()
-        SESSIONS.pop(user_id)
+        current = SESSIONS.get(user_id)
+        if current is not None and getattr(current, "owner", None) == id(ws):
+            current.simflag = False
+            if current.task and not current.task.done():
+                current.task.cancel()
+            SESSIONS.pop(user_id, None)
         print(f"[WS] disconnected: {user_id}")
 
     except Exception as e:
@@ -525,19 +532,20 @@ async def ws_endpoint(ws: WebSocket, user_id: str,  case_id:int, robot_id: int):
 
 async def run_simulation(ws: WebSocket, session: Session):
     sim = session.sim
+    limit = int(session.meta.get("n_steps") or 300)
     try:
-        while session.simflag:
-            if not session.simflag:
-                await ws.send_json({"type": "done", "tick": sim.tick, "kpi": sim.kpi()})
-                return
-
-            await  ws.send_json({
-                    "type": "state",
-                    "tick": sim.tick,
-                    "robots": sim.robots_payload(),
-                    "kpi": sim.kpi(),
-                })
-            await asyncio.sleep(0.03)
+        while session.simflag and sim.tick < limit:
+            sim.step()
+            await ws.send_json({
+                "type": "state",
+                "tick": sim.tick,
+                "robots": sim.robots_payload(),
+                "kpi": sim.kpi(),
+            })
+            await asyncio.sleep(0.05)
+        if session.simflag:
+            session.simflag = False
+            await ws.send_json({"type": "done", "tick": sim.tick, "kpi": sim.kpi()})
 
     except asyncio.CancelledError:
         await ws.send_json({"type": "stopped"})

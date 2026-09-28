@@ -7,13 +7,20 @@ const props = defineProps({
     type: String,
     required: true,
   },
+  locked: {
+    type: Boolean,
+    default: false,
+  },
 })
 
-const emit = defineEmits(['close', 'switch'])
+const emit = defineEmits(['close', 'switch', 'done'])
 
 const auth = useAuthStore()
 const error = ref('')
+const success = ref('')
+const pending = ref(false)
 const form = ref(emptyForm())
+let doneTimer
 
 const isLogin = computed(() => props.mode === 'login')
 const title = computed(() => (isLogin.value ? 'Войти' : 'Зарегистрироваться'))
@@ -22,6 +29,7 @@ watch(
   () => props.mode,
   () => {
     error.value = ''
+    success.value = ''
     form.value = emptyForm()
   },
 )
@@ -32,6 +40,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
+  clearTimeout(doneTimer)
 })
 
 function emptyForm() {
@@ -48,17 +57,23 @@ function onKeydown(event) {
   if (event.key === 'Escape') emit('close')
 }
 
-function submit() {
+async function submit() {
   error.value = ''
+  pending.value = true
   try {
     if (isLogin.value) {
-      auth.login({ email: form.value.email, password: form.value.password })
+      await auth.login({ email: form.value.email, password: form.value.password })
+      success.value = 'Вход выполнен'
     } else {
-      auth.register(form.value)
+      await auth.register(form.value)
+      success.value = 'Регистрация прошла успешно'
     }
-    emit('close')
+    auth.showNotice(success.value)
+    doneTimer = window.setTimeout(() => emit('done'), 900)
   } catch (reason) {
     error.value = reason.message
+  } finally {
+    pending.value = false
   }
 }
 </script>
@@ -71,40 +86,46 @@ function submit() {
         <button type="button" class="close" aria-label="Закрыть" @click="emit('close')">×</button>
       </div>
 
-      <label v-if="!isLogin">
-        Имя
-        <input v-model="form.firstName" type="text" autocomplete="given-name" required />
-      </label>
-      <label v-if="!isLogin">
-        Фамилия
-        <input v-model="form.lastName" type="text" autocomplete="family-name" required />
-      </label>
-      <label>
-        Электронная почта
-        <input v-model="form.email" type="email" autocomplete="email" required />
-      </label>
-      <label>
-        Пароль
-        <input v-model="form.password" type="password" autocomplete="current-password" minlength="5" required />
-      </label>
-      <label v-if="!isLogin">
-        Повторите пароль
-        <input v-model="form.passwordCheck" type="password" autocomplete="new-password" minlength="5" required />
-      </label>
+      <template v-if="!success">
+        <label v-if="!isLogin">
+          Имя
+          <input v-model="form.firstName" type="text" autocomplete="given-name" required />
+        </label>
+        <label v-if="!isLogin">
+          Фамилия
+          <input v-model="form.lastName" type="text" autocomplete="family-name" required />
+        </label>
+        <label>
+          Электронная почта
+          <input v-model="form.email" type="email" autocomplete="email" required />
+        </label>
+        <label>
+          Пароль
+          <input v-model="form.password" type="password" autocomplete="current-password" minlength="5" required />
+        </label>
+        <label v-if="!isLogin">
+          Повторите пароль
+          <input v-model="form.passwordCheck" type="password" autocomplete="new-password" minlength="5" required />
+        </label>
+      </template>
 
+      <p v-if="locked && !success" class="hint">Войдите, чтобы открыть каталог и подбор решения.</p>
+      <p v-if="success" class="success" role="status">{{ success }}</p>
       <p v-if="error" class="error">{{ error }}</p>
 
-      <button class="submit" type="submit">{{ title }}</button>
+      <button v-if="!success" class="submit" type="submit" :disabled="pending">
+        {{ pending ? 'Подождите…' : title }}
+      </button>
 
       <button
-        v-if="isLogin"
+        v-if="isLogin && !success"
         type="button"
         class="switch"
         @click="emit('switch', 'register')"
       >
         Нет аккаунта? Зарегистрироваться
       </button>
-      <button v-else type="button" class="switch" @click="emit('switch', 'login')">
+      <button v-else-if="!success" type="button" class="switch" @click="emit('switch', 'login')">
         Уже есть аккаунт? Войти
       </button>
     </form>
@@ -181,10 +202,24 @@ input:focus {
   border-color: #767676;
 }
 
+.hint,
+.success,
 .error {
   margin: 0;
-  color: #9b2c2c;
   font-size: 14px;
+}
+
+.hint {
+  color: var(--muted);
+}
+
+.success {
+  color: #146c43;
+  font-weight: 600;
+}
+
+.error {
+  color: #9b2c2c;
 }
 
 .submit {
@@ -194,6 +229,11 @@ input:focus {
   background: #2c2c2c;
   color: #f5f5f5;
   cursor: pointer;
+}
+
+.submit:disabled {
+  cursor: default;
+  opacity: 0.7;
 }
 
 .switch {

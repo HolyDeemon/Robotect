@@ -1,13 +1,48 @@
 <script setup>
-import { nextTick, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { nextTick, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import AppButton from './AppButton.vue'
 import AuthModal from './AuthModal.vue'
 
 const auth = useAuthStore()
+const route = useRoute()
 const router = useRouter()
 const modal = ref(null)
+
+watch(
+  () => route.query.auth,
+  (value) => {
+    if (auth.user) return
+    if (value === 'login' || value === 'register') modal.value = value
+  },
+  { immediate: true },
+)
+
+function safeRedirect(value) {
+  if (typeof value === 'string' && value.startsWith('/') && !value.startsWith('//')) return value
+  return '/catalog'
+}
+
+function closeModal() {
+  modal.value = null
+  if (!route.query.auth && !route.query.redirect) return
+  const query = { ...route.query }
+  delete query.auth
+  delete query.redirect
+  router.replace({ query })
+}
+
+function finishAuth() {
+  const redirect = safeRedirect(route.query.redirect)
+  modal.value = null
+  router.push(redirect)
+}
+
+function logout() {
+  auth.logout()
+  if (route.meta.requiresAuth) router.push('/')
+}
 
 const links = [
   { label: 'Каталог', to: '/catalog' },
@@ -78,8 +113,8 @@ function submitSearch() {
     </form>
 
     <div v-if="auth.user" class="auth">
-      <span class="user-name">{{ auth.user.firstName }} {{ auth.user.lastName }}</span>
-      <button type="button" class="logout" aria-label="Выйти" @click="auth.logout()">
+      <RouterLink class="user-name" to="/account">{{ auth.user.email }}</RouterLink>
+      <button type="button" class="logout" aria-label="Выйти" @click="logout">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M10 7V5a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-2" fill="none" stroke="currentColor" stroke-width="1.6" />
           <path d="M13 12H4m0 0 3-3m-3 3 3 3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
@@ -91,7 +126,14 @@ function submitSearch() {
       <AppButton variant="dark" href="#" @click.prevent="modal = 'register'">Зарегистрироваться</AppButton>
     </div>
 
-    <AuthModal v-if="modal" :mode="modal" @close="modal = null" @switch="modal = $event" />
+    <AuthModal
+      v-if="modal"
+      :mode="modal"
+      :locked="Boolean(route.query.redirect)"
+      @close="closeModal"
+      @switch="modal = $event"
+      @done="finishAuth"
+    />
   </header>
 </template>
 
@@ -189,7 +231,14 @@ function submitSearch() {
 }
 
 .user-name {
-  font-size: 16px;
+  display: inline-flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: #2c2c2c;
+  color: #f5f5f5;
+  font-size: 14px;
   font-weight: 600;
 }
 

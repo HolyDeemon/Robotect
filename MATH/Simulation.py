@@ -16,6 +16,31 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 from dataset import get_num
+
+
+def first_num(data, *keys, default=0.0):
+    """Берёт первое число из набора подписей: поля формы и поля методики называются по-разному."""
+    source = data or {}
+    for key in keys:
+        if key not in source:
+            continue
+        value = get_num(source, key, default=float("nan"))
+        if value == value:
+            return value
+    return default
+
+
+def schematic_size(area, aspect=1.6, max_side=64.0):
+    """Ужимает объект до схемы, которую видно в окне. Метры остаются метрами шага робота."""
+    area = max(float(area or 1), 1.0)
+    width = math.sqrt(area * aspect)
+    height = area / width
+    longest = max(width, height)
+    if longest > max_side:
+        scale = max_side / longest
+        width *= scale
+        height *= scale
+    return max(width, 16.0), max(height, 12.0)
 from schemas import SRobot
 
 
@@ -147,9 +172,14 @@ class TileMap:
 # ===========================================================================
 
 def build_warehouse_map(data: Dict[str, dict]) -> TileMap:
-    area = get_num(data, "Площадь активной (роботизируемой) зоны", 10000)
-    w = math.sqrt(area * 1.6)
-    h = area / w
+    area = first_num(
+        data,
+        "Площадь активной (роботизируемой) зоны",
+        "Площадь рабочих зон",
+        "Площадь",
+        default=10000,
+    )
+    w, h = schematic_size(area, 1.6)
     tmap = TileMap(w, h, 1.0)
     tmap.draw_border(2)
 
@@ -182,10 +212,12 @@ def build_warehouse_map(data: Dict[str, dict]) -> TileMap:
 
 
 def build_airport_map(data: Dict[str, dict]) -> TileMap:
-    term_area = get_num(data, "Суммарная площадь терминала (ов)", 85000)
-    ramp_area = get_num(data, "Площадь перрона и технических зон", 100000)
-    w = math.sqrt((term_area + ramp_area) * 1.4)
-    h = (term_area + ramp_area) / w
+    term_area = first_num(data, "Суммарная площадь терминала (ов)", default=0)
+    ramp_area = first_num(data, "Площадь перрона и технических зон", default=0)
+    area = term_area + ramp_area
+    if area <= 0:
+        area = first_num(data, "Протяжённость маршрутов", default=600) * 40
+    w, h = schematic_size(area, 1.4, 72)
     tmap = TileMap(w, h, 2.0)
     tmap.draw_border(3)
 
@@ -215,11 +247,10 @@ def build_airport_map(data: Dict[str, dict]) -> TileMap:
 
 
 def build_hospital_map(data: Dict[str, dict]) -> TileMap:
-    area = get_num(data, "Общая площадь здания(й)", 45000)
-    floors = max(1, int(get_num(data, "Количество этажей (основной корпус)", 9)))
+    area = first_num(data, "Общая площадь здания(й)", "Площадь", default=45000)
+    floors = max(1, int(first_num(data, "Количество этажей (основной корпус)", "Этажность", default=9)))
     floor_area = area / floors
-    w = math.sqrt(floor_area * 1.5)
-    h = floor_area / w
+    w, h = schematic_size(floor_area, 1.5)
     tmap = TileMap(w, h, 1.0)
     tmap.draw_border(2)
 
@@ -352,9 +383,16 @@ class Simulation:
         self.robot_spec = robot_spec or SRobot()
 
         # смены
-        self.shift_hours = get_num(self.data, "Продолжительность смены", 11.0)
-        self.n_shifts = get_num(self.data, "Количество рабочих смен в сутки", 2)
-        self.shift_start_hour = 2.0
+        self.shift_hours = first_num(self.data, "Продолжительность смены", "Режим работы", default=11.0)
+        self.n_shifts = first_num(self.data, "Количество рабочих смен в сутки", default=1)
+        self.shift_start_hour = 0.0
+        self.cargo_kg = first_num(
+            self.data,
+            "Средняя масса грузовой единицы",
+            "Средняя масса груза",
+            "Масса перемещаемого объекта",
+            default=20,
+        )
         self.work_hours_per_day = self.shift_hours * self.n_shifts
 
         # пиковая нагрузка
@@ -456,7 +494,8 @@ class Simulation:
             self._pending_task_accumulator -= 1.0
             pick = self.rng.choice(self.pick_cells)
             drop = self.rng.choice(self.dropoff_cells)
-            weight = self.rng.uniform(100.0, 1200.0)
+            cap = self.robot_spec.capacity or 200
+            weight = min(self.cargo_kg or 20, cap * 0.8) or 10
             self.task_queue.append(Task(
                 pick_cell=pick, dropoff_cell=drop,
                 priority=1.0, created_tick=self.tick,
@@ -649,7 +688,7 @@ class Simulation:
                 "status": r.status,
                 "tasks": r.tasks_done,
                 "color": r.color,
-                "path": [[rr, cc] for rr, cc in r.path[:80]],
+                "path": [[int(rr), int(cc)] for rr, cc in r.path[:80]],
             }
             for r in self.robots
         ]

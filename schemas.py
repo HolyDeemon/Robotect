@@ -1,38 +1,1 @@
-import decimal
-
-from pydantic import BaseModel, EmailStr, Field
-
-
-class SUserRegister(BaseModel):
-    email: EmailStr = Field(description="Электронная почта")
-    password: str = Field(min_length=5, max_length=50, description="Пароль, от 5 до 50 знаков")
-    name: str = Field(min_length=3, max_length=50, description="Имя, от 3 до 50 символов")
-
-
-class SUserRegisterHashed(BaseModel):
-    email: EmailStr = Field(description="Электронная почта")
-    hashed_password: str = Field(description="Пароль, шифрованный")
-    name: str = Field(min_length=3, max_length=50, description="Имя, от 3 до 50 символов")
-
-
-class SUserAuth(BaseModel):
-    email: EmailStr = Field(description="Электронная почта")
-    password: str = Field(min_length=5, max_length=50, description="Пароль, от 5 до 50 знаков")
-
-class SCoefCreate(BaseModel):
-    name : str = Field(description="Электронная почта")
-    min : float = Field(description="Минимальное значение")
-    base : float= Field(description="Базовое значение")
-    max : float = Field(description="Максимальное значение")
-    from_dataset : bool = Field(description="Взято из датасета")
-
-class SIndex(BaseModel):
-    id : int = Field(description="json")
-    operations: int = Field(description="выполнено операций, шт")
-    session_progress : float  = Field(description="прогресс смены, %")
-    robot_load: float = Field(description="загрузка роботов, %")
-    downtime : float = Field(description="простои, %")
-    task_queue : int = Field(description="очередь задач, шт")
-    accum_savings : decimal = Field(description="накопленная экономия, руб")
-    passed_way: float  = Field(description="пройденный путь, м")
-    average_charge : float = Field(description="средний заряд АКБ, %")
+import decimalfrom datetime import datetimefrom typing import Tuple, Optional, Dict, Anyfrom pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validatorclass SUserRegister(BaseModel):    email: EmailStr = Field(description="Электронная почта")    password: str = Field(min_length=5, max_length=50, description="Пароль, от 5 до 50 знаков")    name: str = Field(min_length=3, max_length=50, description="Имя, от 3 до 50 символов")class SUserRegisterHashed(BaseModel):    email: EmailStr = Field(description="Электронная почта")    hashed_password: str = Field(description="Пароль, шифрованный")    name: str = Field(min_length=3, max_length=50, description="Имя, от 3 до 50 символов")class SUserAuth(BaseModel):    email: EmailStr = Field(description="Электронная почта")    password: str = Field(min_length=5, max_length=50, description="Пароль, от 5 до 50 знаков")class SCoefCreate(BaseModel):    name : str = Field(description="Электронная почта")    min : float = Field(description="Минимальное значение")    base : float = Field(description="Базовое значение")    max : float = Field(description="Максимальное значение")    from_dataset : bool = Field(description="Взято из датасета")class SRobot(BaseModel):    model: str = Field(description="Наименование модели")    cost: int = Field(description="Стоимость: руб")    accum_life: int = Field(description="Стоимость аккумулятора: руб")    capacity: int = Field(description="Грузоподъёмность: кг")    mass: int = Field(description="Масса робота: кг")    length: int = Field(description="Габариты (Д): мм")    width: int = Field(description="Габариты (Ш): мм")    height: int = Field(description="Габариты (В): мм")    max_speed: float = Field(description="Максимальная скорость: м/с.")    navigation_type: str = Field(description="Тип навигации: QR-метки и/или SLAM")    charge_time: float = Field(description="Время зарядки: ч")    work_time: float = Field(description="Время работы: ч")    efficiency: float = Field(description="Производительность: паллет/час")    accuracy: float = Field(description="Точность позиционирования: ± мм")    operationg_conditions: str = Field(description="Допустимые условия эксплуатации: json")    @property    def footprint_m(self) -> Tuple[float, float]:            return self.length / 1000.0, self.width/ 1000.0    @property    def battery_drain_per_m(self) -> float:            """% АКБ на 1 м пути (линейная модель)."""            total_m = self.work_time * 3600.0 * self.max_speed            return 100.0 / total_m if total_m > 0 else 0.0    @property    def charge_rate_pct_per_s(self) -> float:            """% АКБ в секунду при зарядке."""            return 100.0 / (self.charge_time * 60.0) if self.charge_time > 0 else 0.0    @property    def dead_reckoning_speed_mps(self) -> float:            """Рабочая скорость с учётом разгонов/поворотов (75% от макс)."""            return self.max_speed * 0.75class SDatasetCreate(BaseModel):    """Что присылает клиент при создании датасета."""    case_id: int = Field(..., description="id кейса, к которому привязан датасет")    object_type: str = Field(..., min_length=1, max_length=64,                             description="'Склад' / 'Аэропорт' / 'Медучреждение'")    source_file: Optional[str] = Field(None, max_length=512,                                       description="имя/путь исходного файла")    data: Dict[str, Any] = Field(..., description="данные датасета: {param: {unit, base, min, max, note}}")    model_config = ConfigDict(        json_schema_extra={            "example": {                "case_id": 1,                "object_type": "Склад",                "source_file": "Склад.csv",                "data": {                    "Общая площадь склада": {                        "unit": "м²", "base": "20000",                        "min": "10000", "max": "100000", "note": ""                    }                },            }        }    )class SDatasetRead(BaseModel):    """Что возвращает сервер."""    id: int = Field(..., description="id датасета")    case_id: int = Field(..., description="id кейса")    object_type: str    source_file: Optional[str] = None    data: Dict[str, Any]    created_at: datetime = Field(..., description="дата создания (серверная)")    # позволяет возвращать ORM-объект SQLAlchemy напрямую    model_config = ConfigDict(from_attributes=True)class SCaseCreate(BaseModel):    """Тело POST /cases — создание кейса."""    name: str = Field(..., min_length=1, max_length=255,                      description="Название кейса, уникально в рамках пользователя")    object_type: str = Field(..., min_length=1, max_length=64,                             description="'Склад' / 'Аэропорт' / 'Медучреждение'")    description: Optional[str] = Field(None, max_length=2000)    robot_count: int = Field(description="кол во роботов")    @field_validator("object_type")    @classmethod    def check_object_type(cls, v: str) -> str:        allowed = {"Склад", "Аэропорт", "Медучреждение"}        if v not in allowed:            raise ValueError(f"object_type должен быть одним из: {allowed}")        return v    model_config = ConfigDict(        json_schema_extra={            "example": {                "name": "Склад Москва 2025",                "object_type": "Склад",                "description": "Пилотный проект на 8 AMR",            }        }    )class SCaseRead(BaseModel):    """Тело GET /cases — чтение кейса."""    name: str = Field(..., min_length=1, max_length=255,                      description="Название кейса, уникально в рамках пользователя")    object_type: str = Field(..., min_length=1, max_length=64,                             description="'Склад' / 'Аэропорт' / 'Медучреждение'")    description: Optional[str] = Field(None, max_length=2000)    robot_count: int = Field(description="кол во роботов")    shortened: int = Field(description="сокращенные работники")    tariff: int = Field(description="tariff")

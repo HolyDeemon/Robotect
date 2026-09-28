@@ -90,6 +90,7 @@ class DatasetDAO(BaseDAO):
 
 class CaseDAO(BaseDAO):
     model = Case
+    ALLOWED_FIELDS = {"name", "description", "robot_count", "shortened", "tariff"}
     @classmethod
     async def update_case(cls, id: int,
                           name: Optional[str] = None,
@@ -116,10 +117,10 @@ class CaseDAO(BaseDAO):
 
                 changed = False
                 for field, value in updates.items():
-                    if value is None:
+                    if value is None or field not in cls.ALLOWED_FIELDS:
                         continue
-                    if field not in cls.ALLOWED_FIELDS:
-                        continue
+                    if field in {"robot_count", "shortened", "tariff"}:
+                        value = int(value)
                     if getattr(case, field) != value:
                         setattr(case, field, value)
                         changed = True

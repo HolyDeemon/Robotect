@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, HTTPException, Depends, Cookie, Body
+from fastapi import FastAPI, Request, HTTPException, Depends, Cookie, Body, Header
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from schemas import *
@@ -17,6 +17,55 @@ app.add_middleware(
     allow_headers=["*"],  # Разрешить все заголовки
 )
 
+def get_current_user( authorization: str | None = Header(None)) -> User :
+    if not authorization:
+        raise HTTPException(
+            status_code=401,
+            detail="Требуется авторизация",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    parts = authorization.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(
+            status_code=401,
+            detail="Неверный формат заголовка Authorization",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    token = parts[1]
+
+    async with async_session_maker() as session:
+        # --- вариант A: токен в БД ---
+        user = await session.scalar(
+            select(User)
+            .join(Token, Token.user_id == User.id)
+            .where(Token.token == token)
+            .where(
+                (Token.expires_at.is_(None)) |
+                (Token.expires_at > datetime.now(timezone.utc))
+            )
+        )
+        if user is None:
+            raise HTTPException(
+                status_code=401,
+                detail="Токен недействителен или истёк",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # --- вариант B: JWT ---
+        # try:
+        #     payload = decode_token(token)
+        # except jwt.InvalidTokenError:
+        #     raise HTTPException(401, "Невалидный токен")
+        # user = await session.get(User, int(payload["sub"]))
+        # if user is None:
+        #     raise HTTPException(401, "Пользователь не найден")
+
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Пользователь заблокирован")
+
+    return user
 
 async def get_current_user(user_access_token: str = Cookie(None)) -> dict:
     if not user_access_token:

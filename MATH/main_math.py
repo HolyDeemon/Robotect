@@ -371,6 +371,7 @@ async def ws_endpoint(ws: WebSocket, user_id: str,  case_id:int, robot_id: int):
         k_res = (await get_coff("k_res"))["base"]
         robot_spec = await get_robot(robot_id)
         ds = await get_dataset(case_id)
+        case = await get_case(case_id)
         data = ds.data
 
         if not (ds and data):
@@ -497,10 +498,8 @@ async def ws_endpoint(ws: WebSocket, user_id: str,  case_id:int, robot_id: int):
                 work_time = data["Рабочих дней в году"]["base"] * data["Количество рабочих смен в сутки"]["base"] * data["Продолжительность смены"]["base"]
                 avg_load = data["Объём отбора (штук/сутки, всего)"]["base"] / work_time
                 N_robots = sim_N_robots(ef_perf, data["Пиковый коэффициент нагрузки"]["base"] * avg_load, k_res)
-                electricity = 1
-                opex = 1 ##OPEX()
-                battary_change = 1
-                year_effect = 1
+                electricity = sim_electricity(sim, data["Мощность электроснабжения (доступная)"], case.tariff)
+                year_effect = sim_year_effect(sim)
                 await ws.send_json({"type": "KPI",
                                     "ef_perf" : ef_perf,
                                     "k_avail" : k_avail,

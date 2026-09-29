@@ -1,4 +1,5 @@
 import jwt
+from jwt.exceptions import InvalidTokenError
 import os
 from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
@@ -12,7 +13,7 @@ SECRET_KEY = os.getenv("SECRET_KEY", "key")
 ALGORITHM = "HS256"
 TOKEN_EXPIRE = timedelta(days=1)
 
-def create(userID: int, role:str = "user"):
+def create(userID: int, role:str):
     now = datetime.now(timezone.utc)
     payload = {
         "sub" : str(userID),
@@ -26,13 +27,5 @@ def decode(token: str) -> dict:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload
-    except:
+    except InvalidTokenError:
         raise HTTPException(status_code=401, detail="Невалидный токен")
-
-def checkRole(token: str, role : str) -> bool:
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return payload["role"] == role
-    except:
-        raise HTTPException(status_code=401, detail="Невалидный токен")
-

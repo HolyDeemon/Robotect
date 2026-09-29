@@ -13,6 +13,8 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String(200), nullable=False)
     email: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
 
+    role: Mapped[str] = mapped_column(String(50), nullable=False, default="user")
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now())
     last_seen: Mapped[Optional[datetime]] = mapped_column(
@@ -41,16 +43,16 @@ class Robot(Base):
     cost: Mapped[int] =  mapped_column(nullable=False)
     accum_life: Mapped[int] = mapped_column(nullable=False)
     mass: Mapped[int] = mapped_column(nullable=False)
-    size_x: Mapped[int] = mapped_column(nullable=False)
-    size_y: Mapped[int] = mapped_column(nullable=False)
-    size_z: Mapped[int] = mapped_column(nullable=False)
+    length: Mapped[int] = mapped_column(nullable=False)
+    width: Mapped[int] = mapped_column(nullable=False)
+    height: Mapped[int] = mapped_column(nullable=False)
     max_speed: Mapped[float] = mapped_column(nullable=False)
     navigation_type: Mapped[str] = mapped_column(nullable=False)
     charge_time: Mapped[float] = mapped_column(nullable=False)
     work_time: Mapped[float] = mapped_column(nullable=False)
     efficiency: Mapped[float] = mapped_column(nullable=False)
     accuracy: Mapped[float] = mapped_column(nullable=False)
-    from_dataset: Mapped[str] = mapped_column(nullable=False)
+    operationg_conditions: Mapped[str] = mapped_column(nullable=False)
 
 class Case(Base):
     __tablename__ = "cases"

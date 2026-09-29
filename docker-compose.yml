@@ -15,12 +15,36 @@ services:
       timeout: 3s
       retries: 30
 
+  migrate:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL_SYNC: postgresql+psycopg2://postgres:postgres@db:5432/robotics
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: robotics
+    command: >
+      sh -c "
+        echo '▶ Waiting for Postgres...' &&
+        until pg_isready -h db -U postgres; do sleep 1; done &&
+        echo '✔ Applying migrations...' &&
+        alembic upgrade head &&
+        echo '✔ Migrations applied'
+      "
+    restart: "no"
+
   db:
     build: .
     command: sh -c "python docker/seed.py && exec uvicorn DATABASE.main_db:app --host 0.0.0.0 --port 8000"
     environment:
       DATABASE_URL: postgresql+asyncpg://robotect:robotect@postgres:5432/robotect
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     healthcheck:

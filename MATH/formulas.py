@@ -81,3 +81,12 @@ def sim_Ef_perf(sim: Simulation, k_avail, effectivness):
 def sim_N_robots(ef_perf, peak_load, k_res):
     return (peak_load / ef_perf) * k_res
 
+def  sim_electricity(sim: Simulation, power, tariff):
+    all_time = 0
+    for i in range(len(sim.robots)):
+        all_time += sim.robots[0].charge_ticks
+    return all_time * power * tariff
+
+def sim_year_effect(sim: Simulation, electricity):
+    Add_inc = (sim.robot_spec.efficiency - 6) * sim.clock.sim_hours * 100
+    return Add_inc - electricity

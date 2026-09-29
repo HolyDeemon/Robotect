@@ -56,7 +56,7 @@ async def loginUser(user_data : SUserAuth, response: Response) -> dict[str, bool
             if not verify_password(user_data.password, data["hashed_password"]):
                 raise HTTPException(status_code=401, detail="Неверный email или пароль")
 
-            response.set_cookie("user_access_token", tokenFabric.create(data["id"]))
+            response.set_cookie("user_access_token", tokenFabric.create(data["id"], data["role"]))
             return {"ok": True, "user_id": data["id"]}
 
         except Exception as e:

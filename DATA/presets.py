@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import csv
 from pathlib import Path
@@ -11,16 +12,16 @@ class SRobotCSV(BaseModel):
     cost: int = Field(..., ge=0)
     accum_life: int = Field(..., gt=0)
     mass: int = Field(..., gt=0)
-    size_x: int = Field(..., gt=0)
-    size_y: int = Field(..., gt=0)
-    size_z: int = Field(..., gt=0)
+    length: int = Field(..., gt=0)
+    width: int = Field(..., gt=0)
+    height: int = Field(..., gt=0)
     max_speed: float = Field(..., gt=0)
     navigation_type: str = Field(..., min_length=1)
     charge_time: float = Field(..., gt=0)
     work_time: float = Field(..., gt=0)
     efficiency: float = Field(..., gt=0)
     accuracy: float = Field(..., ge=0)
-    from_dataset: str = Field(..., min_length=1)
+    operationg_conditions: str = Field(default="")
 
     @field_validator("max_speed", "charge_time", "work_time",
                      "efficiency", "accuracy", mode="before")
@@ -32,7 +33,7 @@ class SRobotCSV(BaseModel):
         return float(str(v).replace(",", ".").strip())
 
     @field_validator("capacity", "cost", "accum_life", "mass",
-                     "size_x", "size_y", "size_z", mode="before")
+                     "length", "width", "height", mode="before")
     @classmethod
     def _to_int(cls, v):
         if isinstance(v, int):
@@ -42,7 +43,7 @@ class SRobotCSV(BaseModel):
 
 def read_robots_csv(path: Path,
                     delimiter: str = ";",
-                    encoding: str = "utf-8-sig") -> Iterator[SRobotCSV]:
+                    encoding: str = "cp1251") -> Iterator[SRobotCSV]:
     """
     Читает CSV и возвращает валидированные строки.
     utf-8-sig — чтобы BOM от Excel не попал в первый ключ.
@@ -59,35 +60,45 @@ def read_robots_csv(path: Path,
             except ValidationError as e:
                 raise ValueError(f"Ошибка в строке {i}: {e}") from e
 
+
 COEFFICIENTS = [
-    # --- из датасета ---
-    {"name": "k_PeLo",          "min": 1.2,  "base": 1.5,  "max": 2.5},
-    {"name": "K_load",          "min": 0.70, "base": 0.75, "max": 0.85},
-    {"name": "k_res",           "min": 1.15, "base": 1.15, "max": 1.20},
-    {"name": "k_FOT",           "min": 1.302, "base": 1.302, "max": 1.302},
+    # ============================================================
+    # из датасета
+    # ============================================================
+    {"name": "k_PeLo",       "opt": 1.2,   "base": 1.5,   "pess": 2.5,   "source": "dataset"},
+    {"name": "K_load",       "opt": 0.85,  "base": 0.75,  "pess": 0.70,  "source": "dataset"},
+    {"name": "k_res",        "opt": 1.15,  "base": 1.15,  "pess": 1.20,  "source": "dataset"},
+    {"name": "k_FOT",        "opt": 1.302, "base": 1.302, "pess": 1.302, "source": "dataset"},
 
-    # --- CAPEX-коэффициенты ---
-    {"name": "k_res_capex",     "min": None, "base": 0.10, "max": None},
-    {"name": "battery_life",    "min": 3,    "base": 4,    "max": 5},        # срок службы АКБ, лет
-    {"name": "k_PO",            "min": 0.05, "base": 0.07, "max": 0.10},
-    {"name": "k_integ",         "min": 0.50, "base": 0.75, "max": 1.00},
-    {"name": "k_PNR",           "min": 0.05, "base": 0.07, "max": 0.10},
-    {"name": "k_learn",         "min": 0.02, "base": 0.03, "max": 0.05},
+    # ============================================================
+    # CAPEX-коэффициенты
+    # ============================================================
+    {"name": "k_solCost",    "opt": 0.80,  "base": 1.00,  "pess": 1.20,  "source": "catalog"},
+    {"name": "k_res_capex",  "opt": 0.05,  "base": 0.10,  "pess": 0.15,  "source": "dataset"},
+    {"name": "battery_life", "opt": 5,     "base": 4,     "pess": 3,     "source": "dataset"},
+    {"name": "k_PO",         "opt": 0.05,  "base": 0.07,  "pess": 0.10,  "source": "assumption"},
+    {"name": "k_integ",      "opt": 0.50,  "base": 0.75,  "pess": 1.00,  "source": "assumption"},
+    {"name": "k_PNR",        "opt": 0.05,  "base": 0.07,  "pess": 0.10,  "source": "assumption"},
+    {"name": "k_learn",      "opt": 0.02,  "base": 0.03,  "pess": 0.05,  "source": "assumption"},
 
-    # --- OPEX-коэффициенты ---
-    {"name": "k_service",       "min": 0.08, "base": 0.10, "max": 0.12},
-    {"name": "k_lic",           "min": 0.02, "base": 0.03, "max": 0.05},
-    {"name": "k_conn",          "min": 0.01, "base": 0.01, "max": 0.02},
-    {"name": "k_cons",          "min": 0.01, "base": 0.02, "max": 0.03},
-    {"name": "k_rep",           "min": 0.02, "base": 0.03, "max": 0.05},
+    # ============================================================
+    # OPEX-коэффициенты
+    # ============================================================
+    {"name": "k_service",    "opt": 0.08,  "base": 0.10,  "pess": 0.12,  "source": "assumption"},
+    {"name": "k_lic",        "opt": 0.02,  "base": 0.03,  "pess": 0.05,  "source": "assumption"},
+    {"name": "k_conn",       "opt": 0.01,  "base": 0.01,  "pess": 0.02,  "source": "assumption"},
+    {"name": "k_cons",       "opt": 0.01,  "base": 0.02,  "pess": 0.03,  "source": "assumption"},
+    {"name": "k_rep",        "opt": 0.02,  "base": 0.03,  "pess": 0.05,  "source": "assumption"},
 
-    # --- TCO / общие ---
-    {"name": "inflation",       "min": 0.05, "base": 0.06, "max": 0.07},
-    {"name": "what_if",         "min": 0.8,  "base": 1.0,  "max": 1.2},
+    # ============================================================
+    # TCO / общие
+    # ============================================================
+    {"name": "inflation",    "opt": 0.05,  "base": 0.06,  "pess": 0.07,  "source": "assumption"},
+    {"name": "what_if",      "opt": 0.8,   "base": 1.0,   "pess": 1.2,   "source": "methodology"},
 ]
 
 
-ROBOTS = list( read_robots_csv((Path(__file__).parent / "robots.csv")))
+ROBOTS = list( read_robots_csv((Path(__file__).parent / "robot.csv")))
 
 
 

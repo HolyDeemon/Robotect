@@ -193,7 +193,7 @@ async def get_CAPEX(case_id: int, robot_id : int, scenario : str):
     try:
         robot = await get_robot(robot_id)
         robots = await get_robot_count(case_id, robot_id, scenario)
-        k_solCost = 1.2 if scenario == "opt" else 0.8 if scenario == "pess" else 1.0
+        k_solCost = 1.2 if scenario == "pess" else 0.8 if scenario == "opt" else 1.0
         return CAPEX(
             k_solCost=k_solCost,
             k_res=await coef_value("k_res", scenario),

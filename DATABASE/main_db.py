@@ -17,56 +17,6 @@ app.add_middleware(
     allow_headers=["*"],  # Разрешить все заголовки
 )
 
-def get_current_user( authorization: str | None = Header(None)) -> User :
-    if not authorization:
-        raise HTTPException(
-            status_code=401,
-            detail="Требуется авторизация",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    parts = authorization.split()
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        raise HTTPException(
-            status_code=401,
-            detail="Неверный формат заголовка Authorization",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    token = parts[1]
-
-    async with async_session_maker() as session:
-        # --- вариант A: токен в БД ---
-        user = await session.scalar(
-            select(User)
-            .join(Token, Token.user_id == User.id)
-            .where(Token.token == token)
-            .where(
-                (Token.expires_at.is_(None)) |
-                (Token.expires_at > datetime.now(timezone.utc))
-            )
-        )
-        if user is None:
-            raise HTTPException(
-                status_code=401,
-                detail="Токен недействителен или истёк",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-        # --- вариант B: JWT ---
-        # try:
-        #     payload = decode_token(token)
-        # except jwt.InvalidTokenError:
-        #     raise HTTPException(401, "Невалидный токен")
-        # user = await session.get(User, int(payload["sub"]))
-        # if user is None:
-        #     raise HTTPException(401, "Пользователь не найден")
-
-    if not user.is_active:
-        raise HTTPException(status_code=403, detail="Пользователь заблокирован")
-
-    return user
-
 async def get_current_user(user_access_token: str = Cookie(None)) -> dict:
     if not user_access_token:
         raise HTTPException(status_code=401, detail="Не авторизован")
@@ -102,20 +52,28 @@ async def add_user(user_data : SUserRegisterHashed):
 
 @app.get("/coef")
 async def get_coef(name: str):
-    coef = await CoefDAO.find_one_or_none(name=name)
-    if coef is None and name != name.lower():
-        coef = await CoefDAO.find_one_or_none(name=name.lower())
+    names = [name]
+    if name.lower() == "k_load":
+        names.append("K_load")
+    if name != name.lower():
+        names.append(name.lower())
+    coef = None
+    for lookup in names:
+        coef = await CoefDAO.find_one_or_none(name=lookup)
+        if coef is not None:
+            break
     if coef is None:
         raise HTTPException(status_code=404, detail="Коэффицент не найден")
     return {
         "id": coef.id,
         "name": coef.name,
-        "min": coef.min,
+        "opt": coef.opt,
         "base": coef.base,
-        "max": coef.max,
-        "from_dataset": coef.from_dataset,
-        "opt": coef.max,
-        "pess": coef.min,
+        "pess": coef.pess,
+        "source": coef.source,
+        "max": coef.opt,
+        "min": coef.pess,
+        "from_dataset": coef.source == "dataset",
     }
 
 @app.post("/coef")
@@ -139,20 +97,20 @@ async def get_robot(robot_id : int):
         "accum_life": robot.accum_life,
         "capacity": robot.capacity,
         "mass": robot.mass,
-        "length": robot.size_x,
-        "width": robot.size_y,
-        "height": robot.size_z,
-        "size_x": robot.size_x,
-        "size_y": robot.size_y,
-        "size_z": robot.size_z,
+        "length": robot.length,
+        "width": robot.width,
+        "height": robot.height,
+        "size_x": robot.length,
+        "size_y": robot.width,
+        "size_z": robot.height,
         "max_speed": robot.max_speed,
         "navigation_type": robot.navigation_type,
         "charge_time": robot.charge_time,
         "work_time": robot.work_time,
         "efficiency": robot.efficiency,
         "accuracy": robot.accuracy,
-        "operationg_conditions": robot.from_dataset or "",
-        "from_dataset": robot.from_dataset,
+        "operationg_conditions": robot.operationg_conditions or "",
+        "from_dataset": robot.operationg_conditions,
     }
 
 @app.post("/robot")

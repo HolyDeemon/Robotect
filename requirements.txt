@@ -2,6 +2,8 @@ fastapi
 uvicorn[standard]
 sqlalchemy
 asyncpg
+alembic
+psycopg[binary]
 greenlet
 python-dotenv
 pydantic

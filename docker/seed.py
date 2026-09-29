@@ -1,6 +1,6 @@
 import asyncio
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from DATABASE.database import async_session_maker, engine
 from DATABASE.models import Case, Coef, Dataset, Robot, User
@@ -12,24 +12,6 @@ SYSTEM_EMAIL = "system@robotect.local"
 def cell(value):
     text = str(value)
     return {"unit": "", "base": text, "min": "", "max": "", "note": "", "scenario": text}
-
-
-COEFFICIENTS = [
-    ("k_FOT", 0.8, 1.0, 1.2),
-    ("k_load", 0.8, 1.0, 1.2),
-    ("k_res", 0.8, 1.0, 1.2),
-    ("k_PO", 0.8, 1.0, 1.2),
-    ("k_integ", 0.8, 1.0, 1.2),
-    ("k_PNR", 0.8, 1.0, 1.2),
-    ("k_learn", 0.8, 1.0, 1.2),
-    ("k_service", 0.8, 1.0, 1.2),
-    ("k_lic", 0.8, 1.0, 1.2),
-    ("k_conn", 0.8, 1.0, 1.2),
-    ("k_cons", 0.8, 1.0, 1.2),
-    ("k_rep", 0.8, 1.0, 1.2),
-    ("horizon", 3, 5, 7),
-    ("inflation", 0.02, 0.05, 0.08),
-]
 
 
 async def wait_database():
@@ -58,15 +40,13 @@ async def main():
                 name="System",
                 email=SYSTEM_EMAIL,
                 hashed_password=get_password_hash("not-a-jury-login"),
+                role="user",
             )
             session.add(user)
             await session.flush()
 
-        if await session.scalar(select(func.count()).select_from(Coef)) == 0:
-            session.add_all([
-                Coef(name=name, min=low, base=base, max=high, from_dataset=False)
-                for name, low, base, high in COEFFICIENTS
-            ])
+        if await session.scalar(select(Coef).where(Coef.name == "horizon")) is None:
+            session.add(Coef(name="horizon", opt=7, base=5, pess=3, source="assumption"))
 
         if await session.get(Robot, 1) is None:
             session.add(Robot(
@@ -76,16 +56,16 @@ async def main():
                 cost=1000000,
                 accum_life=5,
                 mass=180,
-                size_x=950,
-                size_y=650,
-                size_z=300,
+                length=950,
+                width=650,
+                height=300,
                 max_speed=1.5,
                 navigation_type="Лидар",
                 charge_time=0.33,
                 work_time=8,
                 efficiency=50,
                 accuracy=10,
-                from_dataset="каталог сайта",
+                operationg_conditions="каталог сайта",
             ))
 
         case = await session.get(Case, 1)
